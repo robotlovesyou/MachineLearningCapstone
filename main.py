@@ -1,3 +1,4 @@
+import sys
 import pandas
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
@@ -11,7 +12,7 @@ from keras.optimizers import SGD
 RANDOM_SEED = 1234
 np.random.seed(RANDOM_SEED)
 
-EPOCHS = 1
+EPOCHS = 20
 
 # List of all data names so that columns can be addressed by name
 NAMES = ['Elevation', 'Aspect', 'Slope', 'Horizontal_Distance_To_Hydrology',
@@ -33,6 +34,29 @@ NUMERICAL = [
     'Elevation', 'Aspect', 'Slope', 'Horizontal_Distance_To_Hydrology', 'Vertical_Distance_To_Hydrology',
     'Horizontal_Distance_To_Roadways', 'Hillshade_9am', 'Hillshade_Noon', 'Hillshade_3pm',
     'Horizontal_Distance_To_Fire_Points']
+
+def write_report_line(report, template, param):
+    report.write(template.format(param))
+
+def write_report(options, results):
+    [(final_training_loss, final_training_accuracy),
+        (final_testing_loss, final_testing_accuracy)
+    ] = results
+
+    typ = options['typ']
+    epochs = options['epochs']
+    dropout = options['dropout']
+    layers = options['layers']
+    report = open('/output/report.txt', 'w')
+    write_report_line(report, 'Type: {}\n', typ)
+    write_report_line(report, 'Epochs: {}\n', epochs)
+    if typ == 'modern':
+        write_report_line(report, 'Dropout: {}\n', dropout)
+        write_report_line(report, 'Layers: {}\n', layers)
+    write_report_line(report, 'Final Training Loss: {}\n', final_training_loss)
+    write_report_line(report, 'Final Training Accuracy {}\n', final_training_accuracy)
+    write_report_line(report, 'Final Testing Loss: {}\n', final_testing_loss)
+    write_report_line(report, 'Final Testing Accuracy {}\n', final_testing_accuracy)
 
 def add_layer(model, n_units, dropout_rate, input_dim=None):
     """Add a dense layer + a dropout layer to the model"""
@@ -76,11 +100,19 @@ def modern_train_test(parameters, x_train, x_test, y_train, y_test, epochs=20):
               batch_size=128,
               verbose=1)
 
-    return model.evaluate(
+    final_train = model.evaluate(
+        x_train,
+        y_train,
+        batch_size=128,
+        verbose=1)
+
+    final_test = model.evaluate(
         x_test,
         y_test,
         batch_size=128,
         verbose=1)
+
+    return [final_train, final_test]
 
 def original_train_test(x_train, x_test, y_train, y_test, epochs=20):
     """To match the original paper:
@@ -104,16 +136,24 @@ def original_train_test(x_train, x_test, y_train, y_test, epochs=20):
               batch_size=128,
               verbose=1)
 
-    return model.evaluate(
+    final_train = model.evaluate(
+        x_train,
+        y_train,
+        batch_size=128,
+        verbose=1)
+
+    final_test = model.evaluate(
         x_test,
         y_test,
         batch_size=128,
         verbose=1)
 
+    return [final_train, final_test]
+
 def prepared_data():
     """Load the dataset from csv, scale the numerical data, convert the types and split the features and labels"""
     # Load the data
-    df = pandas.read_csv('./dataset/covtype.data', header=None, names=NAMES)
+    df = pandas.read_csv('/dataset/covtype.data', header=None, names=NAMES)
 
     # Split the data into labels and features
     labels = df['Cover_type']
@@ -141,95 +181,34 @@ def create_train_test_data(features, labels):
 
     return x_train, x_test, y_train, y_test
 
-def modern_train_and_display(parameters, x_train, x_test, y_train, y_test, epochs):
-    label = ", ".join([str(u) for u, d in parameters])
-
-    result = modern_train_test(parameters, x_train, x_test, y_train, y_test, epochs=EPOCHS)
-    print("")
-    print(label, result)
-
-def train_and_test():
-    """train and test the target models"""
+def train_and_test(options):
+    """"train and test the target models"""
 
     features, labels = prepared_data()
     x_train, x_test, y_train, y_test = create_train_test_data(features, labels)
 
-    result = original_train_test(x_train, x_test, y_train, y_test, epochs=EPOCHS)
-    print("Original method", result)
+    if options['typ'] == 'original':
+        result = original_train_test(x_train, x_test, y_train, y_test, options['epochs'])
+    else:
+        architecture = [(x, options['dropout']) for x in options['layers']]
+        result = modern_train_test(architecture, x_train, x_test, y_train, y_test, options['epochs'])
 
-    modern_train_and_display([(60, 0.5)], x_train, x_test, y_train, y_test, EPOCHS)
+    write_report(options, result)
 
-    modern_train_and_display([
-            (120, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
+def parse_args():
+    typ = ''
+    epochs = 0
+    dropout = 0.
+    layers = []
+    if sys.argv[1] == 'original':
+        typ = 'original'
+        epochs = int(sys.argv[2])
+    else:
+        typ = 'modern'
+        epochs = int(sys.argv[2])
+        dropout = float(sys.argv[3])
+        layers = [int(arg) for arg in sys.argv[4:]]
 
-    modern_train_and_display([
-            (240, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
+    return {'typ': typ, 'epochs': epochs, 'dropout': dropout, 'layers': layers}
 
-    modern_train_and_display([
-            (530, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (60, 0.5),
-            (60, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (120, 0.5),
-            (120, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (240, 0.5),
-            (240, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (530, 0.5),
-            (530, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (60, 0.5),
-            (60, 0.5),
-            (60, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (120, 0.5),
-            (120, 0.5),
-            (120, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (240, 0.5),
-            (240, 0.5),
-            (240, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (530, 0.5),
-            (530, 0.5),
-            (530, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (240, 0.5),
-            (120, 0.5),
-            (60, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-    modern_train_and_display([
-            (530, 0.5),
-            (240, 0.5),
-            (120, 0.5),
-            (60, 0.5)
-        ], x_train, x_test, y_train, y_test, EPOCHS)
-
-train_and_test()
-# TODO: Try different network architectures
-# TODO: Change the initializers on the original network to be between -1 and 1 which is closer to the experiment
-# TODO: Change the original network learning rate and momentum rates to 0.5
-# TODO: See if original network labels can be left in original form and not categorical
+train_and_test(parse_args())
