@@ -11,12 +11,15 @@ from data import prepared_data
 RANDOM_SEED = 1234
 np.random.seed(RANDOM_SEED)
 
+def write_model(model):
+    model.save('/output/model.h5')
+
 def write_report_line(report, template, param):
     report.write(template.format(param))
 
 def write_report(options, results):
     [(final_training_loss, final_training_accuracy),
-        (final_testing_loss, final_testing_accuracy)
+        (final_testing_loss, final_testing_accuracy),
     ] = results
 
     typ = options['typ']
@@ -33,6 +36,7 @@ def write_report(options, results):
     write_report_line(report, 'Final Training Accuracy {}\n', final_training_accuracy)
     write_report_line(report, 'Final Testing Loss: {}\n', final_testing_loss)
     write_report_line(report, 'Final Testing Accuracy {}\n', final_testing_accuracy)
+    report.close()
 
 def add_layer(model, n_units, dropout_rate, input_dim=None):
     """Add a dense layer + a dropout layer to the model"""
@@ -96,7 +100,7 @@ def modern_train_test(parameters, x_train, x_test, y_train, y_test, epochs=20):
         x_test,
         y_test)
 
-    return [final_train, final_test]
+    return [final_train, final_test, model]
 
 def create_original_model(x_shape):
     """To match the original paper:
@@ -132,7 +136,7 @@ def original_train_test(x_train, x_test, y_train, y_test, epochs=20):
         x_test,
         y_test)
 
-    return [final_train, final_test]
+    return [final_train, final_test, model]
 
 def create_train_test_data(features, labels):
     """Split the data in to train and test (using stratification) amd convert the labels to keras categories.
@@ -154,12 +158,13 @@ def train_and_test(options):
     x_train, x_test, y_train, y_test = create_train_test_data(features, labels)
 
     if options['typ'] == 'original':
-        result = original_train_test(x_train, x_test, y_train, y_test, options['epochs'])
+        train_result, test_result, model = original_train_test(x_train, x_test, y_train, y_test, options['epochs'])
     else:
         architecture = [(x, options['dropout']) for x in options['layers']]
-        result = modern_train_test(architecture, x_train, x_test, y_train, y_test, options['epochs'])
+        train_result, test_result, model = modern_train_test(architecture, x_train, x_test, y_train, y_test, options['epochs'])
 
-    write_report(options, result)
+    write_model(model)
+    write_report(options, (train_result, test_result))
 
 def parse_args():
     """parse command line args to create run options"""
