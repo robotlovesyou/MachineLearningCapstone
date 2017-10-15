@@ -26,10 +26,11 @@ def load_data():
     """Load the dataset into a pandas dataframe"""
     return pandas.read_csv('/dataset/covtype.data', header=None, names=NAMES)
 
-def prepared_data():
+def prepared_data(df=None):
     """Load the dataset from csv, scale the numerical data, convert the types and split the features and labels"""
-    # Load the data
-    df = load_data()
+    # Load the data if not provided
+    if df is None:
+        df = load_data()
 
     # Split the data into labels and features
     labels = df['Cover_type']
