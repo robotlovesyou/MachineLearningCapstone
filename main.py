@@ -1,5 +1,6 @@
 import argparse
 import sys
+from random import randint
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
@@ -8,15 +9,12 @@ from imblearn.under_sampling import RandomUnderSampler
 from imblearn.over_sampling import RandomOverSampler
 import keras
 from keras import backend as K
-from keras.callbacks import Callback
+from keras.callbacks import Callback, EarlyStopping
 from keras.initializers import TruncatedNormal
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
 from keras.optimizers import SGD
 from data import load_data, prepared_data
-
-RANDOM_SEED = 1234
-np.random.seed(RANDOM_SEED)
 
 # Keras f1 code taken from https://stackoverflow.com/questions/43547402/how-to-calculate-f1-macro-in-keras
 # def f1(y_true, y_pred):
@@ -52,14 +50,15 @@ np.random.seed(RANDOM_SEED)
 
 class Options(object):
     """Class to represent command options"""
-    def __init__(self, typ, epochs, resample, dropout, layers, weight_data, weight_scale):
+    def __init__(self, typ, epochs, resample, dropout, layers, weight_data, seed, min_loss):
         self.typ = typ
         self.epochs = epochs
         self.resample = resample
         self.dropout = dropout
         self.layers = layers
         self.weight_data = weight_data
-        self.weight_scale = weight_scale
+        self.seed = seed
+        self.min_loss = min_loss
 
 class OptionBuilder():
     """Builder object for Options class"""
@@ -71,8 +70,8 @@ class OptionBuilder():
         self._dropout = None
         self._layers = None
         self._weight_data = None
-        self._sample_weight = None
-
+        self._seed = None
+        self._min_loss = None
 
     def typ(self, typ):
         self._typ = typ
@@ -98,8 +97,12 @@ class OptionBuilder():
         self._weight_data = weight_data
         return self
 
-    def weight_scale(self, weight_scale):
-        self._weight_scale = weight_scale
+    def seed(self, seed):
+        self._seed = seed
+        return self
+
+    def min_loss(self, min_loss):
+        self._min_loss = min_loss
         return self
 
     def options(self):
@@ -116,7 +119,8 @@ class OptionBuilder():
             self._dropout,
             self._layers,
             self._weight_data,
-            self._weight_scale)
+            self._seed,
+            self._min_loss)
 
 class Data(object):
     """A class to handle the preparation of train/test data"""
@@ -138,7 +142,7 @@ class Data(object):
             self.features,
             self.labels,
             test_size=0.2,
-            random_state=RANDOM_SEED,
+            random_state=options.seed,
             stratify=self.labels)
 
         self._postprocess_data()
@@ -159,13 +163,17 @@ class Data(object):
         return cw
 
     def compute_sample_weight(self):
-        """Returns the sample weights for the TESTING data.
-        If the class weight option is true then returns the sample weights calculated by
-        the 'balanced' option. Otherwise all should be 1"""
-        typ = 'balanced' if self.options.weight_data else None
-        sw = np.array([self.options.weight_scale * v for v in compute_sample_weight(typ, self.y_test_ary)])
+        """Returns the sample weights for the TESTING data"""
+        sw = compute_sample_weight('balanced', self.y_test_ary)
         print("Using sample weights (only first 10 shown):", sw[:10])
         return sw
+
+    def filter_by_category(self, x, y, category):
+        """Return features and labels for a single category"""
+        features_and_labels = np.hstack((x, y))
+        filtered = np.array([r for r in features_and_labels if r[53 + category] == 1])
+        features, labels = filtered[...,:54], filtered[...,54:]
+        return features, labels
 
     def _postprocess_data(self):
         if self.resampler is not None:
@@ -176,19 +184,18 @@ class RandomUnderSampledData(Data):
     """A class to handle the preparation of Random Undersampled train/test data"""
     def __init__(self, options):
         Data.__init__(self, options)
-        self.resampler = RandomUnderSampler(random_state=RANDOM_SEED)
+        self.resampler = RandomUnderSampler(random_state=self.options.seed)
         print("Using random under sampler")
 
 class RandomOverSampledData(Data):
     """A class to handle the preparation of Random Oversampled train/test data"""
     def __init__(self, options):
         Data.__init__(self, options)
-        self.resampler = RandomOverSampler(random_state=RANDOM_SEED)
+        self.resampler = RandomOverSampler(random_state=self.options.seed)
         print("Using random over sampler")
 
 def create_data_handler(options):
     """factory function to create appropriate data hander based upon options"""
-    print("RESAMPLE", options.resample)
     if options.resample == 'undersample':
         return RandomUnderSampledData(options)
     elif options.resample == 'oversample':
@@ -270,13 +277,14 @@ class Trainer(object):
     def train(self):
         """Train the model using the training data"""
         self._epoch_logger = EpochEndCallback()
+        early_stopping = EarlyStoppingWithMinLoss(self._options.min_loss)
         self._data.create_train_test_data()
         self._model.fit(self._data.x_train, self._data.y_train,
             epochs=self._options.epochs,
             batch_size=128,
             verbose=0,
             class_weight=self._data.compute_class_weight(),
-            callbacks=[self._epoch_logger])
+            callbacks=[self._epoch_logger, early_stopping])
 
 class TestResults(object):
     """container for results of testing a model"""
@@ -312,19 +320,13 @@ class Tester(object):
         self.results.weighted_accuracy = weighted_acc
 
     def _test_by_category(self):
-        self._features_and_labels = np.hstack((self._data.x_test, self._data.y_test))
         for c in range(1, 8):
             _, acc, _ = self._evaluate_by_category(c)
             self.results.add_results_for_category(c, acc)
 
-    def _filter_by_category(category):
-        """Return features and labels for a single category"""
-        filtered = np.array([r for r in self._features_and_labels if r[53 + category] == 1])
-        return filtered[...,:54], filtered[...,54:]
-
     def _evaluate_by_category(self, category):
         """Perform an evaluation on the model for a single category"""
-        filtered_features, filtered_labels = filter_by_category(self._features_and_labels, category)
+        filtered_features, filtered_labels = self._data.filter_by_category(self._data.x_test, self._data.y_test, category)
         return self._test_with(filtered_features, filtered_labels)
 
     def test(self):
@@ -357,6 +359,38 @@ class EpochEndCallback(Callback):
         self.loss.append(logs.get('loss'))
         self.acc.append(logs.get('acc'))
         self.weighted_acc.append(logs.get('wieghted_acc'))
+
+class EarlyStoppingWithMinLoss(EarlyStopping):
+    """EarlyStoppingWithMinLoss extends the EarlyStopping callback to
+    add a min loss value which will cause the model to exit"""
+    def __init__(self, min_loss):
+        # Hard coded values. Go directly to Jail. Do not pass go...
+        EarlyStopping.__init__(self, 'loss', 0.000001, 100)
+        self.min_loss = min_loss
+
+    def on_epoch_end(self, epoch, logs=None):
+        """This code is taken directly from the Keras Early stopping Callback.
+        It simply has the minimum loss added"""
+        current = logs.get(self.monitor)
+        if current is None:
+            warnings.warn(
+                'Early stopping conditioned on metric `%s` '
+                'which is not available. Available metrics are: %s' %
+                (self.monitor, ','.join(list(logs.keys()))), RuntimeWarning
+            )
+            return
+
+        if current <= self.min_loss:
+            self.stopped_epoch = epoch
+            self.model.stop_training = True
+        elif self.monitor_op(current - self.min_delta, self.best):
+            self.best = current
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                self.stopped_epoch = epoch
+                self.model.stop_training = True
 
 def write_model(model):
     """Save the model to the output directory"""
@@ -626,7 +660,8 @@ def parse_args():
     parser.add_argument('-d', '--dropout', type=float, default=0.5)
     parser.add_argument('-l', '--layers', nargs='+', type=int, default=None)
     parser.add_argument('-w', '--weight_data', action='store_true', default=False)
-    parser.add_argument('-s', '--weight_scale', type=float, default=1.0)
+    parser.add_argument('-s', '--seed', type=int, default=randint(0, int(pow(2, 32)) -1))
+    parser.add_argument('-m', '--min_loss', type=float, default=0.05)
     args = parser.parse_args()
     options = OptionBuilder().\
         typ(args.type).\
@@ -635,11 +670,14 @@ def parse_args():
         dropout(args.dropout).\
         layers(args.layers).\
         weight_data(args.weight_data).\
-        weight_scale(args.weight_scale).\
+        seed(args.seed).\
+        min_loss(args.min_loss).\
         options()
 
     return options
 
 if __name__ == "__main__":
-    #print("TRY CLASS WEIGHT INSTEAD OF SAMPLE WEIGHT")
-    train_and_test(parse_args())
+    options = parse_args()
+    print("USING SEED:", options.seed)
+    np.random.seed(options.seed)
+    train_and_test(options)
