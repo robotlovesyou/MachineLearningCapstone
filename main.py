@@ -15,6 +15,7 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout
 from keras.optimizers import SGD
 from data import load_data, prepared_data
+import h5py
 
 # Keras f1 code taken from https://stackoverflow.com/questions/43547402/how-to-calculate-f1-macro-in-keras
 # def f1(y_true, y_pred):
@@ -290,7 +291,7 @@ class Trainer(object):
 
     def train(self):
         """Train the model using the training data"""
-        self._epoch_logger = EpochEndCallback()
+        self.epoch_logger = EpochEndCallback()
         early_stopping = EarlyStoppingWithMinLoss(self._options.min_loss)
         self._data.create_train_test_data()
         self._model.fit(self._data.x_train, self._data.y_train,
@@ -298,7 +299,9 @@ class Trainer(object):
             batch_size=128,
             verbose=0,
             class_weight=self._data.compute_class_weight(),
-            callbacks=[self._epoch_logger, early_stopping])
+            callbacks=[self.epoch_logger, early_stopping])
+
+
 
 class TestResults(object):
     """container for results of testing a model"""
@@ -373,6 +376,16 @@ class EpochEndCallback(Callback):
         self.loss.append(logs.get('loss'))
         self.acc.append(logs.get('acc'))
         self.weighted_acc.append(logs.get('wieghted_acc'))
+
+    def save(self, filename):
+        f = h5py.File(filename, 'w')
+        loss = np.array(self.loss).astype('float32')
+        acc = np.array(self.acc).astype('float32')
+        weighted_acc = np.array(self.weighted_acc).astype('float32')
+        f.create_dataset('loss', data=loss)
+        f.create_dataset('acc', data=acc)
+        f.create_dataset('weighted_acc', data=weighted_acc)
+        f.close()
 
 class EarlyStoppingWithMinLoss(EarlyStopping):
     """EarlyStoppingWithMinLoss extends the EarlyStopping callback to
@@ -633,6 +646,7 @@ def train_and_test(options):
     results = tester.test()
 
     model.save('/output/{}-model.h5'.format(options.describe()))
+    trainer.epoch_logger.save('/output/{}-logs.h5'.format(options.describe()))
 
     print("Loss", results.loss)
     print("Accuracy", results.accuracy)
