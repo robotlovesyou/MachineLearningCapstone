@@ -60,6 +60,19 @@ class Options(object):
         self.seed = seed
         self.min_loss = min_loss
 
+    def describe(self):
+        """return a string description of the options to use for report and model names"""
+        return 'T{}-E{}-R{}-D{}-L{}-W{}-S{}-M{}'.format(
+            self.typ,
+            self.epochs,
+            self.resample,
+            self.dropout,
+            ".".join(self.layers),
+            self.weight_data,
+            self.seed,
+            self.min_loss
+        )
+
 class OptionBuilder():
     """Builder object for Options class"""
     #pylint: disable=C0111
@@ -149,6 +162,7 @@ class Data(object):
 
         self.y_train_ary -= 1
         self.y_test_ary -= 1
+
         self.y_train = keras.utils.to_categorical(self.y_train_ary, num_classes=7)
         self.y_test = keras.utils.to_categorical(self.y_test_ary, num_classes=7)
         return self.x_train, self.x_test, self.y_train, self.y_test
@@ -617,6 +631,9 @@ def train_and_test(options):
     trainer.train()
     tester = Tester(handler, model)
     results = tester.test()
+
+    model.save('/output/{}-model.h5'.format(options.describe()))
+
     print("Loss", results.loss)
     print("Accuracy", results.accuracy)
     print("Weighted Accuracy", results.weighted_accuracy)
@@ -658,7 +675,7 @@ def parse_args():
     parser.add_argument('-e', '--epochs', type=int, default=100)
     parser.add_argument('-r', '--resample', choices=['oversample', 'undersample'], default=None)
     parser.add_argument('-d', '--dropout', type=float, default=0.5)
-    parser.add_argument('-l', '--layers', nargs='+', type=int, default=None)
+    parser.add_argument('-l', '--layers', nargs='+', type=int, default=[])
     parser.add_argument('-w', '--weight_data', action='store_true', default=False)
     parser.add_argument('-s', '--seed', type=int, default=randint(0, int(pow(2, 32)) -1))
     parser.add_argument('-m', '--min_loss', type=float, default=0.05)
