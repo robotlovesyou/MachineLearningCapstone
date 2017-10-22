@@ -1,1 +1,2 @@
 imbalanced-learn
+keras==2.0.8

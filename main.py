@@ -51,25 +51,39 @@ import h5py
 
 class Options(object):
     """Class to represent command options"""
-    def __init__(self, typ, epochs, resample, dropout, layers, weight_data, seed, min_loss):
+    def __init__(self, typ, epochs, resample, dropout, layers, num_per_class, weight_data, boost_per_class, seed, min_loss):
         self.typ = typ
         self.epochs = epochs
         self.resample = resample
         self.dropout = dropout
         self.layers = layers
+        self.num_per_class = num_per_class
         self.weight_data = weight_data
+        self.boost_per_class = boost_per_class
         self.seed = seed
         self.min_loss = min_loss
 
+    def _describe_nums(self):
+        if self.num_per_class is None:
+            return 'NA'
+        return '.'.join(map(lambda x: '{}-{}'.format(x[0], x[1]), self.num_per_class.items()))
+
+    def describe_boost_per_class(self):
+        if not self.weight_data:
+            return 'NA'
+        return '.'.join(map(lambda x: '{}-{}'.format(x[0], x[1]), self.boost_per_class.items()))
+
     def describe(self):
         """return a string description of the options to use for report and model names"""
-        return 'T{}-E{}-R{}-D{}-L{}-W{}-S{}-M{}'.format(
+        return 'T{}-E{}-R{}-D{}-L{}-N{}-W{}-B{}-S{}-M{}'.format(
             self.typ,
             self.epochs,
             self.resample,
             self.dropout,
-            ".".join(self.layers),
+            ".".join(map(lambda x: str(x), self.layers)),
+            self._describe_nums(),
             self.weight_data,
+            self.describe_boost_per_class(),
             self.seed,
             self.min_loss
         )
@@ -84,6 +98,7 @@ class OptionBuilder():
         self._dropout = None
         self._layers = None
         self._weight_data = None
+        self._boost_per_class = None
         self._seed = None
         self._min_loss = None
 
@@ -107,8 +122,16 @@ class OptionBuilder():
         self._layers = layers
         return self
 
+    def num_per_class(self, num_per_class):
+        self._num_per_class = num_per_class
+        return self
+
     def weight_data(self, weight_data):
         self._weight_data = weight_data
+        return self
+
+    def boost_per_class(self, boost_per_class):
+        self._boost_per_class = boost_per_class
         return self
 
     def seed(self, seed):
@@ -124,17 +147,36 @@ class OptionBuilder():
         if self._weight_data and self._resample is not None:
             raise ValueError("cannot use weights and resampling at the same time")
 
-        if (self._typ == 'modern' and self._layers is None):
+        if self._typ == 'modern' and self._layers is None:
             raise ValueError("layers option required for modern type")
 
+        num_per_class = None
+        if self._num_per_class:
+            if len(self._num_per_class) != 7:
+                raise ValueError("if num per class is provided it must have 7 entries")
+
+            num_per_class = {i + 1: v for i, v in enumerate(self._num_per_class)}
+
+        boost_per_class = {n: 1 for n in range(7)}
+        if self._boost_per_class and not self._weight_data:
+            raise ValueError("boost per class only works with weighting")
+
+        if self._boost_per_class:
+            if len(self._boost_per_class)  != 7:
+                raise ValueError("if boost per class is provided it must have 7 entries")
+
+            boost_per_class = {i: v for i, v in enumerate(self._boost_per_class)}
+
         return Options(self._typ,
-            self._epochs,
-            self._resample,
-            self._dropout,
-            self._layers,
-            self._weight_data,
-            self._seed,
-            self._min_loss)
+                       self._epochs,
+                       self._resample,
+                       self._dropout,
+                       self._layers,
+                       num_per_class,
+                       self._weight_data,
+                       boost_per_class,
+                       self._seed,
+                       self._min_loss)
 
 class Data(object):
     """A class to handle the preparation of train/test data"""
@@ -173,7 +215,7 @@ class Data(object):
         If the class weight option is true then returns the class weights calculated by
         the 'balanced' option. Otherwise all should be 1"""
         typ = 'balanced' if self.options.weight_data else None
-        cw = {k: v for k, v in enumerate(compute_class_weight(typ, np.unique(self.y_train_ary), self.y_train_ary))}
+        cw = {k: options.boost_per_class[k] * v for k, v in enumerate(compute_class_weight(typ, np.unique(self.y_train_ary), self.y_train_ary))}
         print("Using class weights:", cw)
         return cw
 
@@ -199,7 +241,8 @@ class RandomUnderSampledData(Data):
     """A class to handle the preparation of Random Undersampled train/test data"""
     def __init__(self, options):
         Data.__init__(self, options)
-        self.resampler = RandomUnderSampler(random_state=self.options.seed)
+        ratio = options.num_per_class if options.num_per_class is not None else 'auto'
+        self.resampler = RandomUnderSampler(ratio=ratio, random_state=self.options.seed)
         print("Using random under sampler")
 
 class RandomOverSampledData(Data):
@@ -419,78 +462,154 @@ class EarlyStoppingWithMinLoss(EarlyStopping):
                 self.stopped_epoch = epoch
                 self.model.stop_training = True
 
-def write_model(model):
-    """Save the model to the output directory"""
-    model.save('/output/model.h5')
+class ReportWriter(object):
+    """Class to write out a final report for the model parameters and performance"""
+    def __init__(self, results, options, data):
+        self._results = results
+        self._options = options
+        self._data = data
+        self._class_names = {
+            1: 'Spruce/Fir',
+            2: 'Lodgepole Pine',
+            3: 'Ponderosa Pine',
+            4: 'Cottenwood/Willow',
+            5: 'Aspen',
+            6: 'Douglas-fir',
+            7: 'Krummholz'
+        }
 
-def write_report_line(report, template, param):
-    """Write a single report line"""
-    report.write(template.format(param))
+    def create(self, path):
+        # open the reporting file
+        # write out the details of the parameters for the report
+        # (including weights etc)
+        # write out the results of the training/testing
+        self._open_report(path)
+        self._training_details()
+        self._describe_results()
+        self._close_report()
 
-def write_report(options, train_result, test_result, x_test, y_test, cat_weights, model):
-    """Write out the report on the model performance"""
-    final_training_loss, final_training_accuracy = train_result
-    final_testing_loss, final_testing_accuracy = test_result
+    def _open_report(self, path):
+        self._report = open(path, 'w')
 
-    typ = options['typ']
-    epochs = options['epochs']
-    dropout = options['dropout']
-    layers = options['layers']
-    report = open('/output/report.txt', 'w')
+    def _close_report(self):
+        self._report.close()
 
-    report.write("================================================================================\n")
-    report.write("SAMPLE WEIGHTS BY CATEGORY\n")
-    report.write("================================================================================\n")
-    for k in cat_weights.keys():
-        report.write("Category: {} Weight: {}\n".format(k, cat_weights[k]))
-    report.write("\n\n")
-    report.write("================================================================================\n")
-    report.write("OVERALL EVALUATION\n")
-    report.write("================================================================================\n")
-    write_report_line(report, 'Type: {}\n', typ)
-    write_report_line(report, 'Epochs: {}\n', epochs)
-    if typ == 'modern':
-        write_report_line(report, 'Dropout: {}\n', dropout)
-        write_report_line(report, 'Layers: {}\n', layers)
-    write_report_line(report, 'Final Training Loss: {}\n', final_training_loss)
-    write_report_line(report, 'Final Training Accuracy {}\n', final_training_accuracy)
-    write_report_line(report, 'Final Testing Loss: {}\n', final_testing_loss)
-    write_report_line(report, 'Final Testing Accuracy {}\n', final_testing_accuracy)
+    def _write_line(self, line):
+        self._report.write('{}\n'.format(line))
 
-    features_and_labels = np.hstack((x_test, y_test))
+    def _section_heading(self, title):
+        self._write_line("================================================================================")
+        self._write_line(title)
+        self._write_line("================================================================================")
 
-    report.write("\n\n")
-    report.write("================================================================================\n")
-    report.write("PER CATEGORY EVALUATION\n")
-    report.write("================================================================================\n")
-    report.write(format_category_evaluation("Spruce/Fir", 1, features_and_labels, model))
-    report.write(format_category_evaluation("Lodgepole Pine", 2, features_and_labels, model))
-    report.write(format_category_evaluation("Ponderosa Pine", 3, features_and_labels, model))
-    report.write(format_category_evaluation("Cottenwood/Willow", 4, features_and_labels, model))
-    report.write(format_category_evaluation("Aspen", 5, features_and_labels, model))
-    report.write(format_category_evaluation("Douglas-fir", 6, features_and_labels, model))
-    report.write(format_category_evaluation("Krummholz", 7, features_and_labels, model))
-    report.close()
+    def _title_and_value(self, title, value):
+        self._write_line('{}: {}'.format(title, value))
 
-def filter_by_category(features_labels, category):
-    """Return features and labels for a single category"""
-    filtered = np.array([r for r in features_labels if r[53 + category] == 1])
-    return filtered[...,:54], filtered[...,54:]
+    def _training_details(self):
+        self._section_heading("TRAINING OPTIONS")
+        self._title_and_value('Type', self._options.typ)
+        self._title_and_value('Epochs', self._options.epochs)
 
-def evaluate_by_category(features_labels, category, model):
-    """Perform an evaluation on the model for a single category"""
-    filtered_features, filtered_labels = filter_by_category(features_labels, category)
-    result = evaluate_model(model, filtered_features, filtered_labels)
-    return result
+        resample = self._options.resample if self._options.resample is not None else 'NA'
+        self._title_and_value('Resample', resample)
+        if self._options.resample is not None:
+            for n in range(1, 8):
+                _, labels = self._data.filter_by_category(self._data.x_train, self._data.y_train, n)
+                self._title_and_value(self._class_names[n], str(labels.shape[0]))
 
-def format_category_evaluation(name, category, features_labels, model):
-    """Return a formetted description of the category evaluation"""
-    [loss, accuracy] = evaluate_by_category(
-    features_labels, category, model)
-    return "{}: Loss: {}, Accuracy: {}\n".format(name, loss, accuracy)
+        dropout = self._options.dropout if self._options.typ == 'modern' else 'NA'
+        self._title_and_value('Dropout', dropout)
 
-def filter_frame_by_category(frame, category):
-    return frame.loc[(frame['Cover_type'] == category)]
+        layers = ", ".join(map(lambda x: str(x), self._options.layers)) if self._options.typ == 'modern' else 'NA'
+        self._title_and_value('Layers', layers)
+
+        self._title_and_value('Used Category Weights?', self._options.weight_data)
+        if self._options.weight_data:
+            weights = self._data.compute_class_weight()
+            for n in range(7):
+                self._title_and_value(self._class_names[n + 1], weights[n])
+
+    def _describe_results(self):
+        self._section_heading('RESULTS')
+        self._title_and_value('Accuracy', self._results.accuracy)
+        self._title_and_value('Weighted Accuracy', self._results.weighted_accuracy)
+        self._write_line('')
+        for n in range(1, 8):
+            self._title_and_value(self._class_names[n], self._results.categorical_results[n])
+
+
+# def write_model(model):
+#     """Save the model to the output directory"""
+#     model.save('/output/model.h5')
+
+# def write_report_line(report, template, param):
+#     """Write a single report line"""
+#     report.write(template.format(param))
+
+# def write_report(options, train_result, test_result, x_test, y_test, cat_weights, model):
+#     """Write out the report on the model performance"""
+#     final_training_loss, final_training_accuracy = train_result
+#     final_testing_loss, final_testing_accuracy = test_result
+
+#     typ = options['typ']
+#     epochs = options['epochs']
+#     dropout = options['dropout']
+#     layers = options['layers']
+#     report = open('/output/report.txt', 'w')
+
+#     report.write("================================================================================\n")
+#     report.write("SAMPLE WEIGHTS BY CATEGORY\n")
+#     report.write("================================================================================\n")
+#     for k in cat_weights.keys():
+#         report.write("Category: {} Weight: {}\n".format(k, cat_weights[k]))
+#     report.write("\n\n")
+#     report.write("================================================================================\n")
+#     report.write("OVERALL EVALUATION\n")
+#     report.write("================================================================================\n")
+#     write_report_line(report, 'Type: {}\n', typ)
+#     write_report_line(report, 'Epochs: {}\n', epochs)
+#     if typ == 'modern':
+#         write_report_line(report, 'Dropout: {}\n', dropout)
+#         write_report_line(report, 'Layers: {}\n', layers)
+#     write_report_line(report, 'Final Training Loss: {}\n', final_training_loss)
+#     write_report_line(report, 'Final Training Accuracy {}\n', final_training_accuracy)
+#     write_report_line(report, 'Final Testing Loss: {}\n', final_testing_loss)
+#     write_report_line(report, 'Final Testing Accuracy {}\n', final_testing_accuracy)
+
+#     features_and_labels = np.hstack((x_test, y_test))
+
+#     report.write("\n\n")
+#     report.write("================================================================================\n")
+#     report.write("PER CATEGORY EVALUATION\n")
+#     report.write("================================================================================\n")
+#     report.write(format_category_evaluation("Spruce/Fir", 1, features_and_labels, model))
+#     report.write(format_category_evaluation("Lodgepole Pine", 2, features_and_labels, model))
+#     report.write(format_category_evaluation("Ponderosa Pine", 3, features_and_labels, model))
+#     report.write(format_category_evaluation("Cottenwood/Willow", 4, features_and_labels, model))
+#     report.write(format_category_evaluation("Aspen", 5, features_and_labels, model))
+#     report.write(format_category_evaluation("Douglas-fir", 6, features_and_labels, model))
+#     report.write(format_category_evaluation("Krummholz", 7, features_and_labels, model))
+#     report.close()
+
+# def filter_by_category(features_labels, category):
+#     """Return features and labels for a single category"""
+#     filtered = np.array([r for r in features_labels if r[53 + category] == 1])
+#     return filtered[...,:54], filtered[...,54:]
+
+# def evaluate_by_category(features_labels, category, model):
+#     """Perform an evaluation on the model for a single category"""
+#     filtered_features, filtered_labels = filter_by_category(features_labels, category)
+#     result = evaluate_model(model, filtered_features, filtered_labels)
+#     return result
+
+# def format_category_evaluation(name, category, features_labels, model):
+#     """Return a formetted description of the category evaluation"""
+#     [loss, accuracy] = evaluate_by_category(
+#     features_labels, category, model)
+#     return "{}: Loss: {}, Accuracy: {}\n".format(name, loss, accuracy)
+
+# def filter_frame_by_category(frame, category):
+#     return frame.loc[(frame['Cover_type'] == category)]
 
 # def calculate_category_totals(frame):
 #     return {cat: filter_frame_by_category(frame, cat).shape[0] for cat in range(1,8)}
@@ -647,6 +766,7 @@ def train_and_test(options):
 
     model.save('/output/{}-model.h5'.format(options.describe()))
     trainer.epoch_logger.save('/output/{}-logs.h5'.format(options.describe()))
+    ReportWriter(results, options, handler).create('/output/{}-report.txt'.format(options.describe()))
 
     print("Loss", results.loss)
     print("Accuracy", results.accuracy)
@@ -690,7 +810,9 @@ def parse_args():
     parser.add_argument('-r', '--resample', choices=['oversample', 'undersample'], default=None)
     parser.add_argument('-d', '--dropout', type=float, default=0.5)
     parser.add_argument('-l', '--layers', nargs='+', type=int, default=[])
+    parser.add_argument('-n', '--num_per_class', nargs='+', type=int, default=[])
     parser.add_argument('-w', '--weight_data', action='store_true', default=False)
+    parser.add_argument('-b', '--boost_per_class', nargs="+", type=float, default=[])
     parser.add_argument('-s', '--seed', type=int, default=randint(0, int(pow(2, 32)) -1))
     parser.add_argument('-m', '--min_loss', type=float, default=0.05)
     args = parser.parse_args()
@@ -700,7 +822,9 @@ def parse_args():
         resample(args.resample).\
         dropout(args.dropout).\
         layers(args.layers).\
+        num_per_class(args.num_per_class).\
         weight_data(args.weight_data).\
+        boost_per_class(args.boost_per_class).\
         seed(args.seed).\
         min_loss(args.min_loss).\
         options()
