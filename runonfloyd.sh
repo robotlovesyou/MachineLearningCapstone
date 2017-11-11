@@ -1,7 +1,7 @@
 #! /usr/bin/env bash
 set -euxo pipefail
-export PARAMS="-t modern -e 1000 -l 120 120 120"
-floyd run \
+export PARAMS="-t modern -e 1000 -l 2160 2160 2160"
+floyd -v run \
 --gpu \
 --data robotlovesou/datasets/covtypedata/1:/dataset \
 --env tensorflow-1.3 \
