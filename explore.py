@@ -14,7 +14,7 @@ def describe_category(frame, filtered_frame, name):
 def filter_and_describe_category(frame, category, name):
   describe_category(frame, filter_by_category(frame, category), name)
 
-df = load_data()
+df = load_data('dataset/covtype.data')
 
 print("The data has {} rows".format(df.shape[0]))
 

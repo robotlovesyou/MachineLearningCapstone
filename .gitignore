@@ -1,6 +1,7 @@
 __pycache__
 /env
 /output
+/model
 /.idea
 /.vscode
 .DS_Store

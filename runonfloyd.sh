@@ -1,6 +1,6 @@
 #! /usr/bin/env bash
 set -euxo pipefail
-export PARAMS="-t modern -e 1000 -l 2160 2160 2160"
+export PARAMS="-t modern -e 1 -l 60"
 floyd -v run \
 --gpu \
 --data robotlovesou/datasets/covtypedata/1:/dataset \

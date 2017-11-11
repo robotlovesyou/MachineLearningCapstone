@@ -22,15 +22,15 @@ NUMERICAL = [
     'Horizontal_Distance_To_Roadways', 'Hillshade_9am', 'Hillshade_Noon', 'Hillshade_3pm',
     'Horizontal_Distance_To_Fire_Points']
 
-def load_data():
+def load_data(path):
     """Load the dataset into a pandas dataframe"""
-    return pandas.read_csv('/dataset/covtype.data', header=None, names=NAMES)
+    return pandas.read_csv(path, header=None, names=NAMES)
 
-def prepared_data(df=None):
+def prepared_data(path=None, df=None):
     """Load the dataset from csv, scale the numerical data, convert the types and split the features and labels"""
     # Load the data if not provided
     if df is None:
-        df = load_data()
+        df = load_data(path)
 
     # Split the data into labels and features
     labels = df['Cover_type']

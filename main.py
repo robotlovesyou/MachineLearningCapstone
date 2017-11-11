@@ -163,8 +163,8 @@ class Data(object):
     """A class to handle the preparation of train/test data"""
     def __init__(self, options):
         self.options = options
-        self.data = load_data()
-        self.features, self.labels = prepared_data(self.data)
+        self.data = load_data(self.options.dataset)
+        self.features, self.labels = prepared_data(df=self.data)
         self.x_train = None
         self.y_train = None
         self.y_train_ary = None
@@ -533,9 +533,9 @@ def train_and_test(options):
     tester = Tester(handler, model)
     results = tester.test()
 
-    model.save('/output/{}-model.h5'.format(options.describe()))
-    trainer.epoch_logger.save('/output/{}-logs.h5'.format(options.describe()))
-    ReportWriter(results, options, handler).create('/output/{}-report.txt'.format(options.describe()))
+    model.save('{}/{}-model.h5'.format(options.outdir, options.describe()))
+    trainer.epoch_logger.save('{}/{}-logs.h5'.format(options.outdir, options.describe()))
+    ReportWriter(results, options, handler).create('{}/{}-report.txt'.format(options.outdir, options.describe()))
 
     print("Loss", results.loss)
     print("Accuracy", results.accuracy)
@@ -570,7 +570,7 @@ def parse_args():
         seed(args.seed).\
         min_loss(args.min_loss).\
         dataset(args.dataset).\
-        outdir(args.dataset).\
+        outdir(args.outdir).\
         options()
 
     return options
