@@ -249,18 +249,27 @@ class ModelMaker(object):
         self._options = options
         self._model = None
 
-    def create_model():
+    def create_model(self):
+        """Base implementation of create_model. Must be implemented in concrete classes"""
         raise NotImplementedError()
 
 class OriginalModelMaker(ModelMaker):
+    """Class to create original style models"""
 
     def create_model(self):
+        """Create a 'original' model according to the provided options and return it"""
         model = Sequential()
-        model.add(Dense(120, activation='sigmoid', kernel_initializer=TruncatedNormal(stddev=1.0), input_dim=self._x_shape[1]))
+        model.add(Dense(
+            120,
+            activation='sigmoid',
+            kernel_initializer=TruncatedNormal(stddev=1.0),
+            input_dim=self._x_shape[1]))
+
         model.add(Dense(7, activation='sigmoid'))
 
         sgd = SGD(lr=0.05, decay=1e-6, momentum=0.5)
-        model.compile(loss='mean_squared_error',
+        model.compile(
+            loss='mean_squared_error',
             optimizer=sgd,
             metrics=['accuracy'],
             weighted_metrics=['accuracy'])
@@ -268,6 +277,7 @@ class OriginalModelMaker(ModelMaker):
         return model
 
 class ModernModelMaker(ModelMaker):
+    """class to create modern style models"""
 
     def _add_layer(self, n_units, input_dim=None):
         """Add a dense layer + a dropout layer to the model"""
@@ -280,25 +290,25 @@ class ModernModelMaker(ModelMaker):
         self._model.add(Dropout(self._options.dropout))
 
     def create_model(self):
-        """Create a model using modern parameters, with an architecture dictated by pattern.
-        Pattern should be an array of (dimensions, dropout_rate) tuples, one for each hidden layer"""
+        """Create a 'modern' model model according to the provided options and return it"""
 
         self._model = Sequential()
         is_first_layer = True
         for num_units in self._options.layers:
             if is_first_layer:
                 self._add_layer(num_units, self._x_shape[1])
-                is_first_layer=False
+                is_first_layer = False
             else:
                 self._add_layer(num_units)
 
         self._model.add(Dense(7, activation='softmax'))
 
         sgd = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-        self._model.compile(loss='categorical_crossentropy',
-                    optimizer=sgd,
-                    metrics=['accuracy'],
-                    weighted_metrics=['accuracy'])
+        self._model.compile(
+            loss='categorical_crossentropy',
+            optimizer=sgd,
+            metrics=['accuracy'],
+            weighted_metrics=['accuracy'])
         return self._model
 
 def create_model_maker(options, x_shape):
@@ -314,14 +324,16 @@ class Trainer(object):
         self._options = options
         self._data = data
         self._model = model
-        self._epoch_logger = None
+        self.epoch_logger = None
 
     def train(self):
         """Train the model using the training data"""
         self.epoch_logger = EpochEndCallback()
         early_stopping = EarlyStoppingWithMinLoss(self._options.min_loss)
         self._data.create_train_test_data()
-        self._model.fit(self._data.x_train, self._data.y_train,
+        self._model.fit(
+            self._data.x_train,
+            self._data.y_train,
             epochs=self._options.epochs,
             batch_size=128,
             verbose=0,
@@ -339,9 +351,11 @@ class TestResults(object):
         self.categorical_results = {}
 
     def add_results_for_category(self, category, accuracy):
+        """Add results for the category to the output"""
         self.categorical_results[category] = accuracy
 
 class Tester(object):
+    """Class to evaluate a trained model"""
     def __init__(self, data, model):
         self._data = data
         self._model = model
@@ -374,6 +388,7 @@ class Tester(object):
         return self._test_with(filtered_features, filtered_labels)
 
     def test(self):
+        """Evaluate the model and return the results"""
         self.results = TestResults()
         self._test_complete()
         self._test_by_category()
@@ -382,6 +397,7 @@ class Tester(object):
 class EpochEndCallback(Callback):
     """Logs epoch number, loss and accuracy at the end of each epoch"""
     def __init__(self):
+        super().__init__()
         self.loss = []
         self.acc = []
         self.weighted_acc = []
@@ -535,7 +551,8 @@ def train_and_test(options):
 
     model.save('{}/{}-model.h5'.format(options.outdir, options.describe()))
     trainer.epoch_logger.save('{}/{}-logs.h5'.format(options.outdir, options.describe()))
-    ReportWriter(results, options, handler).create('{}/{}-report.txt'.format(options.outdir, options.describe()))
+    ReportWriter(results, options, handler).create(
+        '{}/{}-report.txt'.format(options.outdir, options.describe()))
 
     print("Loss", results.loss)
     print("Accuracy", results.accuracy)
